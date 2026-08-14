@@ -1,0 +1,46 @@
+{
+  "name": "MiniMax H3 Ref2VA A-B-C Companion",
+  "purpose": "Use Image A as subject reference, Image B as background reference, and Video C as motion reference.",
+  "workflow_json_file": "minimax_h3_ref2va_base_public.json",
+  "required_model_files": {
+    "diffusion_model": "MiniMax-H3-REF2VA-Q4_K_M.gguf",
+    "text_encoder": "qwen3vl-32B-MiniMax-H3-Q4_K_M.gguf",
+    "video_vae": "minimax_h3_video_vae_fp16.safetensors",
+    "audio_vae": "minimax_h3_audio_vae_fp32.safetensors"
+  },
+  "expected_inputs_in_workflow": {
+    "Image 1": "Image A / subject person reference",
+    "Image 2": "Image B / background or environment reference",
+    "Video 1": "Video C / motion reference"
+  },
+  "recommended_defaults": {
+    "steps": 8,
+    "sampler": "euler",
+    "scheduler": "beta",
+    "length_seconds": 5,
+    "resolution_note": "Start small, e.g. 460x460 or 512x512 for testing."
+  },
+  "prompt_template_lines": [
+    "subject_definitions:",
+    "<Subject 1> is the person shown in <Image 1>.",
+    "<Environment 1> is the background / location shown in <Image 2>.",
+    "<Video 1> is the motion reference video.",
+    "",
+    "summary:",
+    "Generate a target video where <Subject 1> appears inside <Environment 1> and follows the body motion, timing, and camera rhythm of <Video 1> as closely as possible.",
+    "",
+    "retention_analysis:",
+    "<Subject 1>: fully_preserved - preserve identity, face, hair, body shape, clothing silhouette if visible, and overall appearance from <Image 1>.",
+    "<Environment 1>: strongly_referenced - reproduce the background, location mood, spatial feel, and visual setting from <Image 2>.",
+    "<Video 1>: motion_reference - reproduce the motion pattern, body movement, timing, and camera feel from <Video 1> as closely as possible.",
+    "",
+    "detailed_description:",
+    "[Shot 1] The target video is realistic and coherent. <Subject 1> is placed naturally inside <Environment 1>. The subject performs movements closely matching <Video 1>, including pose transitions, timing, and overall motion rhythm. Keep the subject clearly recognizable as the person from <Image 1>. Keep the background faithful to <Image 2> while integrating the subject naturally into the scene.",
+    "",
+    "overall_soundscape:",
+    "minimal ambient sound or none.",
+    "",
+    "non_diegetic_music:",
+    "none."
+  ]
+}

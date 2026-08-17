@@ -61,8 +61,22 @@ if [[ ! -d "$COMFY/.git" ]]; then
 else
   git -C "$COMFY" fetch --prune origin
   branch="$(git -C "$COMFY" symbolic-ref --short HEAD 2>/dev/null || true)"
-  [[ -n "$branch" ]] || die "ComfyUI is on a detached commit; cannot safely update"
-  git -C "$COMFY" pull --ff-only origin "$branch" || die "ComfyUI has local/diverged core changes; refusing to overwrite them"
+  if [[ -z "$branch" ]]; then
+    # Setup #5 and other pinned installers can intentionally leave ComfyUI on a
+    # detached release commit. Preserve that commit, then move only a clean core
+    # checkout to current origin/master. Untracked models/custom nodes remain.
+    if [[ -n "$(git -C "$COMFY" status --porcelain --untracked-files=no)" ]]; then
+      die "ComfyUI core is detached and has tracked local changes; refusing to overwrite them"
+    fi
+    old_sha="$(git -C "$COMFY" rev-parse --short=12 HEAD)"
+    backup_branch="codex-v6-backup-$old_sha"
+    git -C "$COMFY" show-ref --verify --quiet "refs/heads/$backup_branch" || \
+      git -C "$COMFY" branch "$backup_branch" HEAD
+    git -C "$COMFY" switch -C codex-v6 origin/master
+    echo "[OK] Detached ComfyUI commit preserved as $backup_branch"
+  else
+    git -C "$COMFY" pull --ff-only origin "$branch" || die "ComfyUI has local/diverged core changes; refusing to overwrite them"
+  fi
 fi
 
 step "[3/10] Python environment"

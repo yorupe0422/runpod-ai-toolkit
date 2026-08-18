@@ -4,7 +4,7 @@ set -Eeuo pipefail
 # RunPod one-shot installer: Qwen-Image-Edit-2511 for ComfyUI
 # Installs four audited workflows: quality, Lightning, Anything2Real and AnyPose.
 
-SCRIPT_VERSION="6.4.0-audit"
+SCRIPT_VERSION="6.4.1-audit"
 
 ROOT="${RUNPOD_ROOT:-/workspace/runpod-slim}"
 COMFY="${COMFY_DIR:-$ROOT/ComfyUI}"
@@ -196,7 +196,7 @@ echo "[OK] Disk preflight: $((available_bytes / 1000000000)) GB free"
 
 download_hf() {
   local repo="$1" revision="$2" remote="$3" dest="$4" expected_size="$5" expected_sha="$6"
-  local actual_size="0" actual_sha=""
+  local actual_size="0" actual_sha="" attempt=1 delay status
   [[ -f "$dest" ]] && actual_size="$(stat -c '%s' "$dest")"
   if [[ "$actual_size" == "$expected_size" ]]; then
     actual_sha="$(sha256sum "$dest" | awk '{print $1}')"
@@ -207,17 +207,21 @@ download_hf() {
   fi
   rm -f "${dest}.part"
   echo "[DOWNLOAD] $repo :: $remote"
-  REPO="$repo" REVISION="$revision" REMOTE="$remote" DEST="$dest" \
-  EXPECTED_SIZE="$expected_size" EXPECTED_SHA="$expected_sha" "$PYTHON_BIN" - <<'PY'
+  # HF can temporarily return HTTP 429 for anonymous large-file downloads.
+  # First use an already-complete local cache without making any HEAD request;
+  # otherwise retry the complete network operation with a patient backoff.
+  while true; do
+    if REPO="$repo" REVISION="$revision" REMOTE="$remote" DEST="$dest" \
+      EXPECTED_SIZE="$expected_size" EXPECTED_SHA="$expected_sha" "$PYTHON_BIN" - <<'PY'
 import hashlib, os, shutil
 from huggingface_hub import hf_hub_download
 repo, remote, dest = os.environ["REPO"], os.environ["REMOTE"], os.environ["DEST"]
 revision = os.environ["REVISION"]
 expected_size = int(os.environ["EXPECTED_SIZE"])
 expected_sha = os.environ["EXPECTED_SHA"]
-def verified_download(force=False):
+def verified_download(force=False, local_only=False):
     src = hf_hub_download(repo_id=repo, filename=remote, revision=revision,
-                          force_download=force)
+                          force_download=force, local_files_only=local_only)
     real = os.path.realpath(src)
     actual_size = os.path.getsize(real)
     h = hashlib.sha256()
@@ -226,14 +230,21 @@ def verified_download(force=False):
             h.update(block)
     return real, actual_size, h.hexdigest()
 
-real, actual_size, actual_sha = verified_download(False)
+try:
+    real, actual_size, actual_sha = verified_download(local_only=True)
+    cached = True
+    print("[CACHE] Complete Hugging Face file found locally; no network request needed")
+except Exception:
+    cached = False
+    real, actual_size, actual_sha = verified_download(False)
 if actual_size != expected_size or actual_sha != expected_sha:
-    print("[WARN] Cached file failed verification; forcing a clean re-download")
+    if cached:
+        print("[WARN] Cached file failed verification; forcing a clean re-download")
     real, actual_size, actual_sha = verified_download(True)
 if actual_size != expected_size:
-    raise RuntimeError(f"size mismatch: expected {expected_size}, got {actual_size}")
+    raise SystemExit(f"Verification failure: size mismatch: expected {expected_size}, got {actual_size}")
 if actual_sha != expected_sha:
-    raise RuntimeError(f"SHA256 mismatch: expected {expected_sha}, got {actual_sha}")
+    raise SystemExit(f"Verification failure: SHA256 mismatch: expected {expected_sha}, got {actual_sha}")
 part = dest + ".part"
 os.makedirs(os.path.dirname(dest), exist_ok=True)
 try:
@@ -243,6 +254,22 @@ except OSError:
 os.replace(part, dest)
 print(f"[OK] {os.path.basename(dest)} ({os.path.getsize(dest):,} bytes)")
 PY
+    then
+      return 0
+    else
+      status=$?
+    fi
+    if (( attempt >= 8 )); then
+      die "Hugging Face download failed after 8 attempts: $(basename "$dest")"
+    fi
+    # 90, 180, 360, 720 seconds; then stay at 15 minutes between attempts.
+    delay=$((90 * (2 ** (attempt - 1))))
+    (( delay > 900 )) && delay=900
+    echo "[WARN] Hugging Face request failed (often a temporary HTTP 429 rate limit)."
+    echo "[WAIT] Retrying $(basename "$dest") in ${delay}s (attempt $((attempt + 1))/8)"
+    sleep "$delay"
+    attempt=$((attempt + 1))
+  done
 }
 
 step "[5/10] Qwen-Image-Edit-2511 models"

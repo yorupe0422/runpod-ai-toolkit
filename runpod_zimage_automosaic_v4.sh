@@ -1,0 +1,194 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+# RunPod AutoMosaic V4 — dual detector + bbox fallback
+# NO IMAGE GENERATION.
+
+BASE_DIR="${BASE_DIR:-/workspace/runpod-slim}"
+COMFY_DIR="${COMFY_DIR:-$BASE_DIR/ComfyUI-ZImage}"
+VENV="$COMFY_DIR/.venv"
+PORT="${COMFY_PORT:-8188}"
+CUSTOM="$COMFY_DIR/custom_nodes/comfyui-auto-mosaic"
+MODEL_DIR="$COMFY_DIR/models/ultralytics"
+WF_DIR="$COMFY_DIR/user/default/workflows"
+EXPORT_DIR="$BASE_DIR/booth_workflows"
+WF_NAME="booth_zimage_elusarca_nsfw_automosaic_v4.json"
+STATE="$BASE_DIR/.automosaic_v4"
+LOG="$STATE/setup.log"
+STATUS="$STATE/status"
+PHASE="$STATE/phase"
+PIDFILE="$STATE/pid"
+HB="${HEARTBEAT_SECONDS:-15}"
+WF_B64="ewogICJsYXN0X25vZGVfaWQiOiAxMywKICAibGFzdF9saW5rX2lkIjogMTUsCiAgIm5vZGVzIjogWwogICAgewogICAgICAiaWQiOiAxLAogICAgICAidHlwZSI6ICJVTkVUTG9hZGVyIiwKICAgICAgInBvcyI6IFsKICAgICAgICAwLAogICAgICAgIDAKICAgICAgXSwKICAgICAgInNpemUiOiBbCiAgICAgICAgMzAwLAogICAgICAgIDExMAogICAgICBdLAogICAgICAiZmxhZ3MiOiB7fSwKICAgICAgIm9yZGVyIjogMCwKICAgICAgIm1vZGUiOiAwLAogICAgICAiaW5wdXRzIjogW10sCiAgICAgICJvdXRwdXRzIjogWwogICAgICAgIHsKICAgICAgICAgICJuYW1lIjogIk1PREVMIiwKICAgICAgICAgICJ0eXBlIjogIk1PREVMIiwKICAgICAgICAgICJsaW5rcyI6IFsKICAgICAgICAgICAgMQogICAgICAgICAgXSwKICAgICAgICAgICJzbG90X2luZGV4IjogMAogICAgICAgIH0KICAgICAgXSwKICAgICAgInByb3BlcnRpZXMiOiB7CiAgICAgICAgIk5vZGUgbmFtZSBmb3IgUyZSIjogIlVORVRMb2FkZXIiCiAgICAgIH0sCiAgICAgICJ3aWRnZXRzX3ZhbHVlcyI6IFsKICAgICAgICAiel9pbWFnZV90dXJib19iZjE2LnNhZmV0ZW5zb3JzIiwKICAgICAgICAiZGVmYXVsdCIKICAgICAgXQogICAgfSwKICAgIHsKICAgICAgImlkIjogMiwKICAgICAgInR5cGUiOiAiQ0xJUExvYWRlciIsCiAgICAgICJwb3MiOiBbCiAgICAgICAgMCwKICAgICAgICAyNDAKICAgICAgXSwKICAgICAgInNpemUiOiBbCiAgICAgICAgMzAwLAogICAgICAgIDE0MAogICAgICBdLAogICAgICAiZmxhZ3MiOiB7fSwKICAgICAgIm9yZGVyIjogMSwKICAgICAgIm1vZGUiOiAwLAogICAgICAiaW5wdXRzIjogW10sCiAgICAgICJvdXRwdXRzIjogWwogICAgICAgIHsKICAgICAgICAgICJuYW1lIjogIkNMSVAiLAogICAgICAgICAgInR5cGUiOiAiQ0xJUCIsCiAgICAgICAgICAibGlua3MiOiBbCiAgICAgICAgICAgIDMKICAgICAgICAgIF0sCiAgICAgICAgICAic2xvdF9pbmRleCI6IDAKICAgICAgICB9CiAgICAgIF0sCiAgICAgICJwcm9wZXJ0aWVzIjogewogICAgICAgICJOb2RlIG5hbWUgZm9yIFMmUiI6ICJDTElQTG9hZGVyIgogICAgICB9LAogICAgICAid2lkZ2V0c192YWx1ZXMiOiBbCiAgICAgICAgInF3ZW5fM180Yi5zYWZldGVuc29ycyIsCiAgICAgICAgImx1bWluYTIiLAogICAgICAgICJkZWZhdWx0IgogICAgICBdCiAgICB9LAogICAgewogICAgICAiaWQiOiAzLAogICAgICAidHlwZSI6ICJWQUVMb2FkZXIiLAogICAgICAicG9zIjogWwogICAgICAgIDAsCiAgICAgICAgNDYwCiAgICAgIF0sCiAgICAgICJzaXplIjogWwogICAgICAgIDMwMCwKICAgICAgICAxMTAKICAgICAgXSwKICAgICAgImZsYWdzIjoge30sCiAgICAgICJvcmRlciI6IDIsCiAgICAgICJtb2RlIjogMCwKICAgICAgImlucHV0cyI6IFtdLAogICAgICAib3V0cHV0cyI6IFsKICAgICAgICB7CiAgICAgICAgICAibmFtZSI6ICJWQUUiLAogICAgICAgICAgInR5cGUiOiAiVkFFIiwKICAgICAgICAgICJsaW5rcyI6IFsKICAgICAgICAgICAgOQogICAgICAgICAgXSwKICAgICAgICAgICJzbG90X2luZGV4IjogMAogICAgICAgIH0KICAgICAgXSwKICAgICAgInByb3BlcnRpZXMiOiB7CiAgICAgICAgIk5vZGUgbmFtZSBmb3IgUyZSIjogIlZBRUxvYWRlciIKICAgICAgfSwKICAgICAgIndpZGdldHNfdmFsdWVzIjogWwogICAgICAgICJhZS5zYWZldGVuc29ycyIKICAgICAgXQogICAgfSwKICAgIHsKICAgICAgImlkIjogNCwKICAgICAgInR5cGUiOiAiQ0xJUFRleHRFbmNvZGUiLAogICAgICAicG9zIjogWwogICAgICAgIDEwODAsCiAgICAgICAgMjQwCiAgICAgIF0sCiAgICAgICJzaXplIjogWwogICAgICAgIDQ3MCwKICAgICAgICAzMDAKICAgICAgXSwKICAgICAgImZsYWdzIjoge30sCiAgICAgICJvcmRlciI6IDYsCiAgICAgICJtb2RlIjogMCwKICAgICAgImlucHV0cyI6IFsKICAgICAgICB7CiAgICAgICAgICAibmFtZSI6ICJjbGlwIiwKICAgICAgICAgICJ0eXBlIjogIkNMSVAiLAogICAgICAgICAgImxpbmsiOiAzCiAgICAgICAgfQogICAgICBdLAogICAgICAib3V0cHV0cyI6IFsKICAgICAgICB7CiAgICAgICAgICAibmFtZSI6ICJDT05ESVRJT05JTkciLAogICAgICAgICAgInR5cGUiOiAiQ09ORElUSU9OSU5HIiwKICAgICAgICAgICJsaW5rcyI6IFsKICAgICAgICAgICAgNCwKICAgICAgICAgICAgNQogICAgICAgICAgXSwKICAgICAgICAgICJzbG90X2luZGV4IjogMAogICAgICAgIH0KICAgICAgXSwKICAgICAgInByb3BlcnRpZXMiOiB7CiAgICAgICAgIk5vZGUgbmFtZSBmb3IgUyZSIjogIkNMSVBUZXh0RW5jb2RlIgogICAgICB9LAogICAgICAid2lkZ2V0c192YWx1ZXMiOiBbCiAgICAgICAgImVsdXNhcmNhIGFuaW1lIHN0eWxlLCBoaWdoLXF1YWxpdHkgYW5pbWUgaWxsdXN0cmF0aW9uLCAyRCwgY2xlYW4gbGluZWFydCwgY2VsLXNoYWRlZCwgdmlicmFudCBjb2xvcnMsIHNvZnQgc2hhZGluZywgcG9saXNoZWQgSmFwYW5lc2UgYW5pbWUgY2hhcmFjdGVyIGlsbHVzdHJhdGlvbiwgYWR1bHQgY2hhcmFjdGVyLCBkZXRhaWxlZCBmYWNlIGFuZCBoYWlyLCBleHByZXNzaXZlIGFuaW1lIGV5ZXMsIG5hdHVyYWwgYm9keSBwcm9wb3J0aW9ucywgY2xlYW4gY29tcG9zaXRpb24sIHNpbXBsZSBiYWNrZ3JvdW5kIgogICAgICBdCiAgICB9LAogICAgewogICAgICAiaWQiOiA1LAogICAgICAidHlwZSI6ICJDb25kaXRpb25pbmdaZXJvT3V0IiwKICAgICAgInBvcyI6IFsKICAgICAgICAxMjkwLAogICAgICAgIDM4MAogICAgICBdLAogICAgICAic2l6ZSI6IFsKICAgICAgICAyNjAsCiAgICAgICAgODAKICAgICAgXSwKICAgICAgImZsYWdzIjoge30sCiAgICAgICJvcmRlciI6IDcsCiAgICAgICJtb2RlIjogMCwKICAgICAgImlucHV0cyI6IFsKICAgICAgICB7CiAgICAgICAgICAibmFtZSI6ICJjb25kaXRpb25pbmciLAogICAgICAgICAgInR5cGUiOiAiQ09ORElUSU9OSU5HIiwKICAgICAgICAgICJsaW5rIjogNQogICAgICAgIH0KICAgICAgXSwKICAgICAgIm91dHB1dHMiOiBbCiAgICAgICAgewogICAgICAgICAgIm5hbWUiOiAiQ09ORElUSU9OSU5HIiwKICAgICAgICAgICJ0eXBlIjogIkNPTkRJVElPTklORyIsCiAgICAgICAgICAibGlua3MiOiBbCiAgICAgICAgICAgIDcKICAgICAgICAgIF0sCiAgICAgICAgICAic2xvdF9pbmRleCI6IDAKICAgICAgICB9CiAgICAgIF0sCiAgICAgICJwcm9wZXJ0aWVzIjogewogICAgICAgICJOb2RlIG5hbWUgZm9yIFMmUiI6ICJDb25kaXRpb25pbmdaZXJvT3V0IgogICAgICB9LAogICAgICAid2lkZ2V0c192YWx1ZXMiOiBbXQogICAgfSwKICAgIHsKICAgICAgImlkIjogNiwKICAgICAgInR5cGUiOiAiRW1wdHlTRDNMYXRlbnRJbWFnZSIsCiAgICAgICJwb3MiOiBbCiAgICAgICAgNzYwLAogICAgICAgIDU4MAogICAgICBdLAogICAgICAic2l6ZSI6IFsKICAgICAgICAzMDAsCiAgICAgICAgMTcwCiAgICAgIF0sCiAgICAgICJmbGFncyI6IHt9LAogICAgICAib3JkZXIiOiA4LAogICAgICAibW9kZSI6IDAsCiAgICAgICJpbnB1dHMiOiBbXSwKICAgICAgIm91dHB1dHMiOiBbCiAgICAgICAgewogICAgICAgICAgIm5hbWUiOiAiTEFURU5UIiwKICAgICAgICAgICJ0eXBlIjogIkxBVEVOVCIsCiAgICAgICAgICAibGlua3MiOiBbCiAgICAgICAgICAgIDgKICAgICAgICAgIF0sCiAgICAgICAgICAic2xvdF9pbmRleCI6IDAKICAgICAgICB9CiAgICAgIF0sCiAgICAgICJwcm9wZXJ0aWVzIjogewogICAgICAgICJOb2RlIG5hbWUgZm9yIFMmUiI6ICJFbXB0eVNEM0xhdGVudEltYWdlIgogICAgICB9LAogICAgICAid2lkZ2V0c192YWx1ZXMiOiBbCiAgICAgICAgODMyLAogICAgICAgIDEyMTYsCiAgICAgICAgMQogICAgICBdCiAgICB9LAogICAgewogICAgICAiaWQiOiA3LAogICAgICAidHlwZSI6ICJNb2RlbFNhbXBsaW5nQXVyYUZsb3ciLAogICAgICAicG9zIjogWwogICAgICAgIDEwODAsCiAgICAgICAgMjAKICAgICAgXSwKICAgICAgInNpemUiOiBbCiAgICAgICAgMzAwLAogICAgICAgIDExMAogICAgICBdLAogICAgICAiZmxhZ3MiOiB7fSwKICAgICAgIm9yZGVyIjogNSwKICAgICAgIm1vZGUiOiAwLAogICAgICAiaW5wdXRzIjogWwogICAgICAgIHsKICAgICAgICAgICJuYW1lIjogIm1vZGVsIiwKICAgICAgICAgICJ0eXBlIjogIk1PREVMIiwKICAgICAgICAgICJsaW5rIjogMTMKICAgICAgICB9CiAgICAgIF0sCiAgICAgICJvdXRwdXRzIjogWwogICAgICAgIHsKICAgICAgICAgICJuYW1lIjogIk1PREVMIiwKICAgICAgICAgICJ0eXBlIjogIk1PREVMIiwKICAgICAgICAgICJsaW5rcyI6IFsKICAgICAgICAgICAgNgogICAgICAgICAgXSwKICAgICAgICAgICJzbG90X2luZGV4IjogMAogICAgICAgIH0KICAgICAgXSwKICAgICAgInByb3BlcnRpZXMiOiB7CiAgICAgICAgIk5vZGUgbmFtZSBmb3IgUyZSIjogIk1vZGVsU2FtcGxpbmdBdXJhRmxvdyIKICAgICAgfSwKICAgICAgIndpZGdldHNfdmFsdWVzIjogWwogICAgICAgIDMKICAgICAgXQogICAgfSwKICAgIHsKICAgICAgImlkIjogOCwKICAgICAgInR5cGUiOiAiS1NhbXBsZXIiLAogICAgICAicG9zIjogWwogICAgICAgIDE3MDAsCiAgICAgICAgMTEwCiAgICAgIF0sCiAgICAgICJzaXplIjogWwogICAgICAgIDMzMCwKICAgICAgICAzNDAKICAgICAgXSwKICAgICAgImZsYWdzIjoge30sCiAgICAgICJvcmRlciI6IDksCiAgICAgICJtb2RlIjogMCwKICAgICAgImlucHV0cyI6IFsKICAgICAgICB7CiAgICAgICAgICAibmFtZSI6ICJtb2RlbCIsCiAgICAgICAgICAidHlwZSI6ICJNT0RFTCIsCiAgICAgICAgICAibGluayI6IDYKICAgICAgICB9LAogICAgICAgIHsKICAgICAgICAgICJuYW1lIjogInBvc2l0aXZlIiwKICAgICAgICAgICJ0eXBlIjogIkNPTkRJVElPTklORyIsCiAgICAgICAgICAibGluayI6IDQKICAgICAgICB9LAogICAgICAgIHsKICAgICAgICAgICJuYW1lIjogIm5lZ2F0aXZlIiwKICAgICAgICAgICJ0eXBlIjogIkNPTkRJVElPTklORyIsCiAgICAgICAgICAibGluayI6IDcKICAgICAgICB9LAogICAgICAgIHsKICAgICAgICAgICJuYW1lIjogImxhdGVudF9pbWFnZSIsCiAgICAgICAgICAidHlwZSI6ICJMQVRFTlQiLAogICAgICAgICAgImxpbmsiOiA4CiAgICAgICAgfQogICAgICBdLAogICAgICAib3V0cHV0cyI6IFsKICAgICAgICB7CiAgICAgICAgICAibmFtZSI6ICJMQVRFTlQiLAogICAgICAgICAgInR5cGUiOiAiTEFURU5UIiwKICAgICAgICAgICJsaW5rcyI6IFsKICAgICAgICAgICAgMTAKICAgICAgICAgIF0sCiAgICAgICAgICAic2xvdF9pbmRleCI6IDAKICAgICAgICB9CiAgICAgIF0sCiAgICAgICJwcm9wZXJ0aWVzIjogewogICAgICAgICJOb2RlIG5hbWUgZm9yIFMmUiI6ICJLU2FtcGxlciIKICAgICAgfSwKICAgICAgIndpZGdldHNfdmFsdWVzIjogWwogICAgICAgIDAsCiAgICAgICAgInJhbmRvbWl6ZSIsCiAgICAgICAgOCwKICAgICAgICAxLjAsCiAgICAgICAgInJlc19tdWx0aXN0ZXAiLAogICAgICAgICJzaW1wbGUiLAogICAgICAgIDEuMAogICAgICBdCiAgICB9LAogICAgewogICAgICAiaWQiOiA5LAogICAgICAidHlwZSI6ICJWQUVEZWNvZGUiLAogICAgICAicG9zIjogWwogICAgICAgIDIxMDAsCiAgICAgICAgMTEwCiAgICAgIF0sCiAgICAgICJzaXplIjogWwogICAgICAgIDI1MCwKICAgICAgICAxMDAKICAgICAgXSwKICAgICAgImZsYWdzIjoge30sCiAgICAgICJvcmRlciI6IDEwLAogICAgICAibW9kZSI6IDAsCiAgICAgICJpbnB1dHMiOiBbCiAgICAgICAgewogICAgICAgICAgIm5hbWUiOiAic2FtcGxlcyIsCiAgICAgICAgICAidHlwZSI6ICJMQVRFTlQiLAogICAgICAgICAgImxpbmsiOiAxMAogICAgICAgIH0sCiAgICAgICAgewogICAgICAgICAgIm5hbWUiOiAidmFlIiwKICAgICAgICAgICJ0eXBlIjogIlZBRSIsCiAgICAgICAgICAibGluayI6IDkKICAgICAgICB9CiAgICAgIF0sCiAgICAgICJvdXRwdXRzIjogWwogICAgICAgIHsKICAgICAgICAgICJuYW1lIjogIklNQUdFIiwKICAgICAgICAgICJ0eXBlIjogIklNQUdFIiwKICAgICAgICAgICJsaW5rcyI6IFsKICAgICAgICAgICAgMTQKICAgICAgICAgIF0sCiAgICAgICAgICAic2xvdF9pbmRleCI6IDAKICAgICAgICB9CiAgICAgIF0sCiAgICAgICJwcm9wZXJ0aWVzIjogewogICAgICAgICJOb2RlIG5hbWUgZm9yIFMmUiI6ICJWQUVEZWNvZGUiCiAgICAgIH0sCiAgICAgICJ3aWRnZXRzX3ZhbHVlcyI6IFtdCiAgICB9LAogICAgewogICAgICAiaWQiOiAxMCwKICAgICAgInR5cGUiOiAiU2F2ZUltYWdlIiwKICAgICAgInBvcyI6IFsKICAgICAgICAyNDUwLAogICAgICAgIDkwCiAgICAgIF0sCiAgICAgICJzaXplIjogWwogICAgICAgIDUwMCwKICAgICAgICA1MDAKICAgICAgXSwKICAgICAgImZsYWdzIjoge30sCiAgICAgICJvcmRlciI6IDExLAogICAgICAibW9kZSI6IDAsCiAgICAgICJpbnB1dHMiOiBbCiAgICAgICAgewogICAgICAgICAgIm5hbWUiOiAiaW1hZ2VzIiwKICAgICAgICAgICJ0eXBlIjogIklNQUdFIiwKICAgICAgICAgICJsaW5rIjogMTUKICAgICAgICB9CiAgICAgIF0sCiAgICAgICJvdXRwdXRzIjogW10sCiAgICAgICJwcm9wZXJ0aWVzIjogewogICAgICAgICJOb2RlIG5hbWUgZm9yIFMmUiI6ICJTYXZlSW1hZ2UiCiAgICAgIH0sCiAgICAgICJ3aWRnZXRzX3ZhbHVlcyI6IFsKICAgICAgICAiYm9vdGhfdGVzdC96aW1hZ2VfZWx1c2FyY2FfYW5pbWUiCiAgICAgIF0KICAgIH0sCiAgICB7CiAgICAgICJpZCI6IDExLAogICAgICAidHlwZSI6ICJMb3JhTG9hZGVyTW9kZWxPbmx5IiwKICAgICAgInBvcyI6IFsKICAgICAgICAzNjAsCiAgICAgICAgMAogICAgICBdLAogICAgICAic2l6ZSI6IFsKICAgICAgICAzMjAsCiAgICAgICAgMTMwCiAgICAgIF0sCiAgICAgICJmbGFncyI6IHt9LAogICAgICAib3JkZXIiOiAzLAogICAgICAibW9kZSI6IDAsCiAgICAgICJpbnB1dHMiOiBbCiAgICAgICAgewogICAgICAgICAgIm5hbWUiOiAibW9kZWwiLAogICAgICAgICAgInR5cGUiOiAiTU9ERUwiLAogICAgICAgICAgImxpbmsiOiAxCiAgICAgICAgfQogICAgICBdLAogICAgICAib3V0cHV0cyI6IFsKICAgICAgICB7CiAgICAgICAgICAibmFtZSI6ICJNT0RFTCIsCiAgICAgICAgICAidHlwZSI6ICJNT0RFTCIsCiAgICAgICAgICAibGlua3MiOiBbCiAgICAgICAgICAgIDEyCiAgICAgICAgICBdLAogICAgICAgICAgInNsb3RfaW5kZXgiOiAwCiAgICAgICAgfQogICAgICBdLAogICAgICAidGl0bGUiOiAiTG9SQSAxIC0gRWx1c2FyY2EgQW5pbWUgU3R5bGUiLAogICAgICAicHJvcGVydGllcyI6IHsKICAgICAgICAiTm9kZSBuYW1lIGZvciBTJlIiOiAiTG9yYUxvYWRlck1vZGVsT25seSIKICAgICAgfSwKICAgICAgIndpZGdldHNfdmFsdWVzIjogWwogICAgICAgICJlbHVzYXJjYS1hbmltZS1zdHlsZS5zYWZldGVuc29ycyIsCiAgICAgICAgMS4wCiAgICAgIF0KICAgIH0sCiAgICB7CiAgICAgICJpZCI6IDEyLAogICAgICAidHlwZSI6ICJMb3JhTG9hZGVyTW9kZWxPbmx5IiwKICAgICAgInBvcyI6IFsKICAgICAgICA3MjAsCiAgICAgICAgMAogICAgICBdLAogICAgICAic2l6ZSI6IFsKICAgICAgICAzMjAsCiAgICAgICAgMTUwCiAgICAgIF0sCiAgICAgICJmbGFncyI6IHt9LAogICAgICAib3JkZXIiOiA0LAogICAgICAibW9kZSI6IDAsCiAgICAgICJpbnB1dHMiOiBbCiAgICAgICAgewogICAgICAgICAgIm5hbWUiOiAibW9kZWwiLAogICAgICAgICAgInR5cGUiOiAiTU9ERUwiLAogICAgICAgICAgImxpbmsiOiAxMgogICAgICAgIH0KICAgICAgXSwKICAgICAgIm91dHB1dHMiOiBbCiAgICAgICAgewogICAgICAgICAgIm5hbWUiOiAiTU9ERUwiLAogICAgICAgICAgInR5cGUiOiAiTU9ERUwiLAogICAgICAgICAgImxpbmtzIjogWwogICAgICAgICAgICAxMwogICAgICAgICAgXSwKICAgICAgICAgICJzbG90X2luZGV4IjogMAogICAgICAgIH0KICAgICAgXSwKICAgICAgInRpdGxlIjogIkxvUkEgMiAtIE5TRlcgLyBDb21wYXJpc29uIChzZWxlY3RhYmxlKSIsCiAgICAgICJwcm9wZXJ0aWVzIjogewogICAgICAgICJOb2RlIG5hbWUgZm9yIFMmUiI6ICJMb3JhTG9hZGVyTW9kZWxPbmx5IgogICAgICB9LAogICAgICAid2lkZ2V0c192YWx1ZXMiOiBbCiAgICAgICAgIm5zZndfY29tcGFyZS9TRUxFQ1RfQUZURVJfSU5TVEFMTC5zYWZldGVuc29ycyIsCiAgICAgICAgMC4wCiAgICAgIF0KICAgIH0sCiAgICB7CiAgICAgICJpZCI6IDEzLAogICAgICAidHlwZSI6ICJBdXRvTW9zYWljIiwKICAgICAgInBvcyI6IFsKICAgICAgICAyMDAwLAogICAgICAgIDkwCiAgICAgIF0sCiAgICAgICJzaXplIjogWwogICAgICAgIDM3MCwKICAgICAgICAzMzAKICAgICAgXSwKICAgICAgImZsYWdzIjoge30sCiAgICAgICJvcmRlciI6IDEyLAogICAgICAibW9kZSI6IDAsCiAgICAgICJpbnB1dHMiOiBbCiAgICAgICAgewogICAgICAgICAgIm5hbWUiOiAiaW1hZ2UiLAogICAgICAgICAgInR5cGUiOiAiSU1BR0UiLAogICAgICAgICAgImxpbmsiOiAxNAogICAgICAgIH0KICAgICAgXSwKICAgICAgIm91dHB1dHMiOiBbCiAgICAgICAgewogICAgICAgICAgIm5hbWUiOiAiSU1BR0UiLAogICAgICAgICAgInR5cGUiOiAiSU1BR0UiLAogICAgICAgICAgImxpbmtzIjogWwogICAgICAgICAgICAxNQogICAgICAgICAgXSwKICAgICAgICAgICJzbG90X2luZGV4IjogMAogICAgICAgIH0sCiAgICAgICAgewogICAgICAgICAgIm5hbWUiOiAiTUFTSyIsCiAgICAgICAgICAidHlwZSI6ICJNQVNLIiwKICAgICAgICAgICJsaW5rcyI6IG51bGwsCiAgICAgICAgICAic2xvdF9pbmRleCI6IDEKICAgICAgICB9CiAgICAgIF0sCiAgICAgICJ0aXRsZSI6ICJBdXRvIE1vc2FpYyBWNCAtIEVyYVggKyBmZW1hbGUtZGV0YWlsIGRldGVjdG9yIiwKICAgICAgInByb3BlcnRpZXMiOiB7CiAgICAgICAgIk5vZGUgbmFtZSBmb3IgUyZSIjogIkF1dG9Nb3NhaWMiCiAgICAgIH0sCiAgICAgICJ3aWRnZXRzX3ZhbHVlcyI6IFsKICAgICAgICBmYWxzZSwKICAgICAgICAiYm9vdGhfbW9zYWljX3Y0IiwKICAgICAgICAwLjE1LAogICAgICAgICJtb3NhaWMiLAogICAgICAgIDQwLAogICAgICAgICJ2YWdpbmEscHVzc3ksdnVsdmEscGVuaXMiLAogICAgICAgICJlcmF4X25zZndfeW9sbzExbS5wdCIsCiAgICAgICAgMy4wLAogICAgICAgIGZhbHNlLAogICAgICAgIDEwLAogICAgICAgICJzaW1wbGUiLAogICAgICAgICJ2YWdpbmEtdjIuNi5wdCIKICAgICAgXQogICAgfQogIF0sCiAgImxpbmtzIjogWwogICAgWwogICAgICAxLAogICAgICAxLAogICAgICAwLAogICAgICAxMSwKICAgICAgMCwKICAgICAgIk1PREVMIgogICAgXSwKICAgIFsKICAgICAgMywKICAgICAgMiwKICAgICAgMCwKICAgICAgNCwKICAgICAgMCwKICAgICAgIkNMSVAiCiAgICBdLAogICAgWwogICAgICA0LAogICAgICA0LAogICAgICAwLAogICAgICA4LAogICAgICAxLAogICAgICAiQ09ORElUSU9OSU5HIgogICAgXSwKICAgIFsKICAgICAgNSwKICAgICAgNCwKICAgICAgMCwKICAgICAgNSwKICAgICAgMCwKICAgICAgIkNPTkRJVElPTklORyIKICAgIF0sCiAgICBbCiAgICAgIDYsCiAgICAgIDcsCiAgICAgIDAsCiAgICAgIDgsCiAgICAgIDAsCiAgICAgICJNT0RFTCIKICAgIF0sCiAgICBbCiAgICAgIDcsCiAgICAgIDUsCiAgICAgIDAsCiAgICAgIDgsCiAgICAgIDIsCiAgICAgICJDT05ESVRJT05JTkciCiAgICBdLAogICAgWwogICAgICA4LAogICAgICA2LAogICAgICAwLAogICAgICA4LAogICAgICAzLAogICAgICAiTEFURU5UIgogICAgXSwKICAgIFsKICAgICAgOSwKICAgICAgMywKICAgICAgMCwKICAgICAgOSwKICAgICAgMSwKICAgICAgIlZBRSIKICAgIF0sCiAgICBbCiAgICAgIDEwLAogICAgICA4LAogICAgICAwLAogICAgICA5LAogICAgICAwLAogICAgICAiTEFURU5UIgogICAgXSwKICAgIFsKICAgICAgMTIsCiAgICAgIDExLAogICAgICAwLAogICAgICAxMiwKICAgICAgMCwKICAgICAgIk1PREVMIgogICAgXSwKICAgIFsKICAgICAgMTMsCiAgICAgIDEyLAogICAgICAwLAogICAgICA3LAogICAgICAwLAogICAgICAiTU9ERUwiCiAgICBdLAogICAgWwogICAgICAxNCwKICAgICAgOSwKICAgICAgMCwKICAgICAgMTMsCiAgICAgIDAsCiAgICAgICJJTUFHRSIKICAgIF0sCiAgICBbCiAgICAgIDE1LAogICAgICAxMywKICAgICAgMCwKICAgICAgMTAsCiAgICAgIDAsCiAgICAgICJJTUFHRSIKICAgIF0KICBdLAogICJncm91cHMiOiBbXSwKICAiY29uZmlnIjoge30sCiAgImV4dHJhIjogewogICAgImRzIjogewogICAgICAic2NhbGUiOiAwLjY4LAogICAgICAib2Zmc2V0IjogWwogICAgICAgIDgwLAogICAgICAgIDEwMAogICAgICBdCiAgICB9CiAgfSwKICAidmVyc2lvbiI6IDAuNAp9"
+PATCH_B64="ZnJvbSBwYXRobGliIGltcG9ydCBQYXRoCmltcG9ydCBzeXMKcCA9IFBhdGgoc3lzLmFyZ3ZbMV0pIC8gImV4dHJhY3Rfc2VnbWVudHMucHkiCnMgPSBwLnJlYWRfdGV4dChlbmNvZGluZz0idXRmLTgiKQptYXJrZXIgPSAiVjQgY29tcGF0aWJpbGl0eTogQXV0b01vc2FpYyB1cHN0cmVhbSBleHBlY3RzIHNlZ21lbnRhdGlvbiBtYXNrcy4iCmlmIG1hcmtlciBpbiBzOgogICAgcHJpbnQoIkJCb3ggZmFsbGJhY2sgcGF0Y2ggYWxyZWFkeSBwcmVzZW50OiIsIHApCiAgICByYWlzZSBTeXN0ZW1FeGl0KDApCmxpbmVzID0gcy5zcGxpdGxpbmVzKCkKc3RhcnQgPSBOb25lCmVuZCA9IE5vbmUKZm9yIGksIGxpbmUgaW4gZW51bWVyYXRlKGxpbmVzKToKICAgIGlmIGxpbmUuc3RyaXAoKSA9PSAiZm9yIHJlc3VsdCBpbiByZXN1bHRzOiIgYW5kIGkgKyAxIDwgbGVuKGxpbmVzKSBhbmQgImlmIHJlc3VsdC5tYXNrcyBpcyBOb25lOiIgaW4gbGluZXNbaSsxXToKICAgICAgICBzdGFydCA9IGkKICAgICAgICBicmVhawppZiBzdGFydCBpcyBOb25lOgogICAgcmFpc2UgU3lzdGVtRXhpdCgiQ291bGQgbm90IGxvY2F0ZSB1cHN0cmVhbSByZXN1bHQgbG9vcDsgcmVmdXNpbmcgYmxpbmQgcGF0Y2giKQpmb3IgaiBpbiByYW5nZShzdGFydCwgbWluKGxlbihsaW5lcyksIHN0YXJ0ICsgNjApKToKICAgIGlmICJjbGFzc19tYXNrc1tjbHNfbmFtZV0gPSBucC5tYXhpbXVtKGNsYXNzX21hc2tzW2Nsc19uYW1lXSwgbWFza19iaW4pIiBpbiBsaW5lc1tqXToKICAgICAgICBlbmQgPSBqCiAgICAgICAgYnJlYWsKaWYgZW5kIGlzIE5vbmU6CiAgICByYWlzZSBTeXN0ZW1FeGl0KCJDb3VsZCBub3QgbG9jYXRlIGVuZCBvZiB1cHN0cmVhbSByZXN1bHQgbG9vcDsgcmVmdXNpbmcgYmxpbmQgcGF0Y2giKQppbmQgPSBsaW5lc1tzdGFydF1bOmxlbihsaW5lc1tzdGFydF0pIC0gbGVuKGxpbmVzW3N0YXJ0XS5sc3RyaXAoKSldCmkxID0gaW5kICsgIiAgICAiCmkyID0gaTEgKyAiICAgICIKaTMgPSBpMiArICIgICAgIgppNCA9IGkzICsgIiAgICAiCm5ldyA9IFsKICAgIGYie2luZH1mb3IgcmVzdWx0IGluIHJlc3VsdHM6IiwKICAgIGYie2kxfWJveGVzID0gcmVzdWx0LmJveGVzLmNwdSgpIGlmIHJlc3VsdC5ib3hlcyBpcyBub3QgTm9uZSBlbHNlIFtdIiwKICAgIGYie2kxfWNsYXNzX25hbWVzID0gbW9kZWwubmFtZXMiLAogICAgIiIsCiAgICBmIntpMX0jIFY0IGNvbXBhdGliaWxpdHk6IEF1dG9Nb3NhaWMgdXBzdHJlYW0gZXhwZWN0cyBzZWdtZW50YXRpb24gbWFza3MuIiwKICAgIGYie2kxfSMgRGV0ZWN0aW9uLW9ubHkgWU9MTyBtb2RlbHMgaGF2ZSByZXN1bHQubWFza3MgPT0gTm9uZSwgc28gY3JlYXRlIiwKICAgIGYie2kxfSMgcmVjdGFuZ3VsYXIgbWFza3MgZnJvbSBib3VuZGluZyBib3hlcyBhbmQgcmV1c2UgdGhlIHNhbWUgcGlwZWxpbmUuIiwKICAgIGYie2kxfWlmIHJlc3VsdC5tYXNrcyBpcyBub3QgTm9uZToiLAogICAgZiJ7aTJ9bWFza3NfZGF0YSA9IHJlc3VsdC5tYXNrcy5kYXRhLmNwdSgpLm51bXB5KCkiLAogICAgZiJ7aTJ9aXRlcmFibGUgPSBbXSIsCiAgICBmIntpMn1mb3IgbWFza19zcmMsIGJveCBpbiB6aXAobWFza3NfZGF0YSwgYm94ZXMpOiIsCiAgICBmIntpM31tYXNrX3Jlc2l6ZWQgPSBjdjIucmVzaXplKG1hc2tfc3JjLCAodywgaCksIGludGVycG9sYXRpb249Y3YyLklOVEVSX0xJTkVBUikiLAogICAgZiJ7aTN9bWFza19iaW4gPSBucC5jbGlwKG1hc2tfcmVzaXplZCwgMCwgMSkuYXN0eXBlKG5wLmZsb2F0MzIpIiwKICAgIGYie2kzfWl0ZXJhYmxlLmFwcGVuZCgobWFza19iaW4sIGJveCkpIiwKICAgIGYie2kxfWVsc2U6IiwKICAgIGYie2kyfWl0ZXJhYmxlID0gW10iLAogICAgZiJ7aTJ9Zm9yIGJveCBpbiBib3hlczoiLAogICAgZiJ7aTN9eDEsIHkxLCB4MiwgeTIgPSBib3gueHl4eVswXS5jcHUoKS5udW1weSgpLmFzdHlwZShpbnQpLnRvbGlzdCgpIiwKICAgIGYie2kzfXgxID0gbWF4KDAsIG1pbih3IC0gMSwgeDEpKTsgeDIgPSBtYXgoMCwgbWluKHcsIHgyKSkiLAogICAgZiJ7aTN9eTEgPSBtYXgoMCwgbWluKGggLSAxLCB5MSkpOyB5MiA9IG1heCgwLCBtaW4oaCwgeTIpKSIsCiAgICBmIntpM31pZiB4MiA8PSB4MSBvciB5MiA8PSB5MToiLAogICAgZiJ7aTR9Y29udGludWUiLAogICAgZiJ7aTN9bWFza19iaW4gPSBucC56ZXJvcygoaCwgdyksIGR0eXBlPW5wLmZsb2F0MzIpIiwKICAgIGYie2kzfW1hc2tfYmluW3kxOnkyLCB4MTp4Ml0gPSAxLjAiLAogICAgZiJ7aTN9aXRlcmFibGUuYXBwZW5kKChtYXNrX2JpbiwgYm94KSkiLAogICAgIiIsCiAgICBmIntpMX1hbGlhc2VzID0ge3siLAogICAgZiJ7aTJ9J3B1c3N5JzogJ3ZhZ2luYScsICd2dWx2YSc6ICd2YWdpbmEnLCIsCiAgICBmIntpMn0nZmVtYWxlX2dlbml0YWxpYSc6ICd2YWdpbmEnLCAnZmVtYWxlLWdlbml0YWxpYSc6ICd2YWdpbmEnLCIsCiAgICBmIntpMX19fSIsCiAgICBmIntpMX1ub3JtYWxpemVkX3RhcmdldHMgPSB7e2FsaWFzZXMuZ2V0KHN0cih4KS5zdHJpcCgpLmxvd2VyKCksIHN0cih4KS5zdHJpcCgpLmxvd2VyKCkpIGZvciB4IGluIHRhcmdldF9jbGFzc2VzfX0iLAogICAgIiIsCiAgICBmIntpMX1mb3IgbWFza19iaW4sIGJveCBpbiBpdGVyYWJsZToiLAogICAgZiJ7aTJ9bWFza19iaW4gPSBfZGlsYXRlX21hc2sobWFza19iaW4sIGJsb2NrX21hcmdpbl9weCkiLAogICAgZiJ7aTJ9bWFza19iaW4gPSBfZGlsYXRlX21hc2sobWFza19iaW4sIHVzZXJfZXhwYW5kX3B4KSIsCiAgICBmIntpMn1jbHNfaWQgPSBpbnQoYm94LmNsc1swXS5pdGVtKCkpIiwKICAgIGYie2kyfWNsc19uYW1lID0gc3RyKGNsYXNzX25hbWVzW2Nsc19pZF0pIiwKICAgIGYie2kyfWNsc19ub3JtID0gYWxpYXNlcy5nZXQoY2xzX25hbWUuc3RyaXAoKS5sb3dlcigpLCBjbHNfbmFtZS5zdHJpcCgpLmxvd2VyKCkpIiwKICAgIGYie2kyfWNvbmYgPSBmbG9hdChib3guY29uZlswXS5pdGVtKCkpIiwKICAgIGYie2kyfWFsbF9zZWdtZW50cy5hcHBlbmQoe3snY2xzX25hbWUnOiBjbHNfbmFtZSwgJ2NvbmYnOiBjb25mLCAnbWFzayc6IG1hc2tfYmluLCAnbW9kZWwnOiBtb2RlbF9sYWJlbH19KSIsCiAgICBmIntpMn1pZiBjbHNfbm9ybSBpbiBub3JtYWxpemVkX3RhcmdldHM6IiwKICAgIGYie2kzfWlmIGNsc19ub3JtIG5vdCBpbiBjbGFzc19tYXNrczoiLAogICAgZiJ7aTR9Y2xhc3NfbWFza3NbY2xzX25vcm1dID0gbnAuemVyb3MoKGgsIHcpLCBkdHlwZT1ucC5mbG9hdDMyKSIsCiAgICBmIntpM31jbGFzc19tYXNrc1tjbHNfbm9ybV0gPSBucC5tYXhpbXVtKGNsYXNzX21hc2tzW2Nsc19ub3JtXSwgbWFza19iaW4pIiwKXQpiYWNrdXAgPSBwLndpdGhfc3VmZml4KCIucHkucHJlX3Y0X2Jib3giKQppZiBub3QgYmFja3VwLmV4aXN0cygpOgogICAgYmFja3VwLndyaXRlX3RleHQocywgZW5jb2Rpbmc9InV0Zi04IikKcGF0Y2hlZCA9IGxpbmVzWzpzdGFydF0gKyBuZXcgKyBsaW5lc1tlbmQrMTpdCnAud3JpdGVfdGV4dCgiXG4iLmpvaW4ocGF0Y2hlZCkgKyAiXG4iLCBlbmNvZGluZz0idXRmLTgiKQpwcmludCgiUEFUQ0hFRCIsIHAp"
+
+ERAX_NAME="erax_nsfw_yolo11m.pt"
+ERAX_URL="https://huggingface.co/erax-ai/EraX-NSFW-V1.0/resolve/main/erax_nsfw_yolo11m.pt?download=true"
+ERAX_SHA="8c7d14911fdc076d80f4614c879ce0979d54f827b251e62989ae949ea1bb2dc8"
+
+VAGINA_NAME="vagina-v2.6.pt"
+VAGINA_URL="https://huggingface.co/ashllay/YOLO_Models/resolve/e07b01219ff1807e1885015f439d788b038f49bd/bbox/vagina-v2.6.pt?download=true"
+VAGINA_SHA="a86b183e49cc9b1facc18d43cea6d44cf9c0cff0b83e9a6f80e593b454e940e3"
+
+mkdir -p "$STATE"
+ts(){ date '+%Y-%m-%d %H:%M:%S'; }
+say(){ echo; echo "================================================================"; echo "[$(ts)] $*"; echo "================================================================"; }
+phase(){ echo "$*" > "$PHASE"; }
+alive(){ [[ -n "${1:-}" ]] && kill -0 "$1" 2>/dev/null; }
+status(){ echo "Status : $(cat "$STATUS" 2>/dev/null || echo NOT_STARTED)"; echo "Phase : $(cat "$PHASE" 2>/dev/null || echo -)"; echo "Log : $LOG"; }
+follow(){ touch "$LOG"; tail -n 120 -F "$LOG"; }
+
+preflight(){
+  say "Preflight"
+  phase "Preflight"
+  [[ -f "$COMFY_DIR/main.py" ]] || { echo "[FATAL] Missing ComfyUI"; exit 10; }
+  [[ -x "$VENV/bin/python" ]] || { echo "[FATAL] Missing venv"; exit 11; }
+  [[ -f "$CUSTOM/extract_segments.py" ]] || { echo "[FATAL] AutoMosaic not installed"; exit 12; }
+  mkdir -p "$MODEL_DIR" "$WF_DIR" "$EXPORT_DIR"
+  "$VENV/bin/python" - <<'PY'
+import torch, ultralytics, cv2
+print("torch",torch.__version__,"cuda",torch.cuda.is_available())
+print("ultralytics",ultralytics.__version__,"opencv",cv2.__version__)
+assert torch.cuda.is_available()
+PY
+}
+
+patch_automosaic(){
+  say "Patch AutoMosaic to support detection-only YOLO models"
+  phase "Patch AutoMosaic"
+  "$VENV/bin/python" - "$PATCH_B64" "$CUSTOM" <<'PY'
+import base64,sys
+code=base64.b64decode(sys.argv[1]).decode()
+sys.argv=[sys.argv[0],sys.argv[2]]
+exec(compile(code,"automosaic_v4_patch.py","exec"))
+PY
+  "$VENV/bin/python" -m py_compile "$CUSTOM/extract_segments.py"
+  grep -q "V4 compatibility: AutoMosaic upstream expects segmentation masks." "$CUSTOM/extract_segments.py"
+  echo "[OK] bbox fallback patch verified"
+}
+
+download_one(){
+  local name="$1" url="$2" sha="$3" dest="$MODEL_DIR/$1"
+  if [[ -s "$dest" ]] && [[ "$(sha256sum "$dest" | awk '{print $1}')" == "$sha" ]]; then
+    echo "[SKIP] verified $name"; return
+  fi
+  rm -f "$dest"
+  curl -fL --retry 8 --retry-delay 3 -o "$dest" "$url"
+  local got="$(sha256sum "$dest" | awk '{print $1}')"
+  [[ "$got" == "$sha" ]] || { echo "[FATAL] SHA mismatch $name expected=$sha got=$got"; exit 20; }
+  echo "[OK] $name bytes=$(stat -c%s "$dest")"
+}
+
+download_detectors(){
+  say "Download EraX + female-detail detector"
+  phase "Download detectors"
+  download_one "$ERAX_NAME" "$ERAX_URL" "$ERAX_SHA"
+  download_one "$VAGINA_NAME" "$VAGINA_URL" "$VAGINA_SHA"
+  cat > "$EXPORT_DIR/AUTOMOSAIC_V4_DETECTORS.txt" <<EOF
+EraX: erax-ai/EraX-NSFW-V1.0 — Apache-2.0 upstream
+Classes: anus, make_love, nipple, penis, vagina
+SHA256: $ERAX_SHA
+
+Secondary: ashllay/YOLO_Models / bbox/vagina-v2.6.pt
+Commercial-use license was not established in this review; comparison use only unless re-verified.
+SHA256: $VAGINA_SHA
+
+V4 patches AutoMosaic to convert detection bounding boxes into masks whenever YOLO returns no segmentation masks.
+EOF
+}
+
+write_wf(){
+  say "Install V4 workflow"
+  phase "Write workflow"
+  "$VENV/bin/python" - "$WF_B64" "$WF_DIR/$WF_NAME" "$EXPORT_DIR/$WF_NAME" <<'PY'
+import base64,json,pathlib,sys
+obj=json.loads(base64.b64decode(sys.argv[1]).decode())
+for x in sys.argv[2:]:
+    p=pathlib.Path(x); p.parent.mkdir(parents=True,exist_ok=True)
+    p.write_text(json.dumps(obj,ensure_ascii=False,indent=2),encoding="utf-8")
+    print("WROTE",p)
+PY
+}
+
+restart(){
+  say "Restart ComfyUI safely"
+  phase "Restart"
+  local listeners="$(lsof -ti TCP:"$PORT" -sTCP:LISTEN 2>/dev/null | sort -u || true)"
+  for pid in $listeners; do
+    local cwd="$(readlink -f "/proc/$pid/cwd" 2>/dev/null || true)"
+    local cmd="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)"
+    if [[ "$cwd" == "$COMFY_DIR" || "$cmd" == *"$COMFY_DIR/main.py"* ]]; then
+      kill "$pid" 2>/dev/null || true
+      for _ in {1..30}; do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
+    else
+      echo "[FATAL] Port $PORT belongs to another process; refusing to kill PID $pid"; exit 30
+    fi
+  done
+  cd "$COMFY_DIR"
+  nohup "$VENV/bin/python" main.py --listen 0.0.0.0 --port "$PORT" --preview-method auto > comfyui_8188.log 2>&1 < /dev/null &
+  local cp=$!
+  for i in {1..60}; do
+    if curl -fsS "http://127.0.0.1:$PORT/system_stats" >/dev/null 2>&1; then echo "[OK] ComfyUI ready"; return; fi
+    kill -0 "$cp" 2>/dev/null || { tail -n 180 comfyui_8188.log; exit 31; }
+    echo "[ALIVE] startup=$((i*5))s PID=$cp"; sleep 5
+  done
+  tail -n 180 comfyui_8188.log; exit 32
+}
+
+verify(){
+  say "Verify detectors visible (NO image generation)"
+  phase "Verify"
+  "$VENV/bin/python" - "$PORT" "$ERAX_NAME" "$VAGINA_NAME" <<'PY'
+import json,sys,urllib.request
+p=int(sys.argv[1]); names=sys.argv[2:]
+o=json.load(urllib.request.urlopen(f"http://127.0.0.1:{p}/object_info",timeout=60))
+assert "AutoMosaic" in o
+models=o["AutoMosaic"]["input"]["required"]["model_name"][0]
+print("model choices:",models)
+for n in names: assert n in models, f"{n} not visible"
+print("[OK] both detectors visible")
+print("NO IMAGE GENERATION PERFORMED")
+PY
+}
+
+worker(){
+  trap '' HUP
+  echo $$ > "$PIDFILE"; echo RUNNING > "$STATUS"
+  local hb_pid=""
+  cleanup(){ [[ -n "${hb_pid:-}" ]] && kill "$hb_pid" 2>/dev/null || true; }
+  trap cleanup EXIT
+  ( while true; do sleep "$HB"; echo "[HEARTBEAT $(ts)] status=$(cat "$STATUS" 2>/dev/null || echo ?) phase=$(cat "$PHASE" 2>/dev/null || echo ?)"; done ) &
+  hb_pid=$!
+
+  preflight
+  patch_automosaic
+  download_detectors
+  write_wf
+  restart
+  verify
+  echo READY > "$STATUS"; phase READY
+  say "READY"
+  echo "Workflow: $WF_DIR/$WF_NAME"
+  echo "model1=$ERAX_NAME model2=$VAGINA_NAME"
+  echo "target=vagina,pussy,vulva,penis confidence=0.15 factor=40 mask_expand=3.0"
+  echo "No image was generated."
+}
+
+launch(){
+  local p="$(cat "$PIDFILE" 2>/dev/null || true)"
+  if alive "$p"; then echo "Already running PID=$p"; follow; return; fi
+  : > "$LOG"
+  nohup bash "${BASH_SOURCE[0]}" --worker >> "$LOG" 2>&1 < /dev/null &
+  echo $! > "$PIDFILE"
+  echo "Started detached installer PID=$!"
+  sleep 1
+  follow
+}
+
+case "${1:-}" in
+  --worker) exec > >(tee -a "$LOG") 2>&1; worker ;;
+  --status) status ;;
+  --follow) follow ;;
+  "") launch ;;
+  *) echo "Usage: $0 [--status|--follow]"; exit 2 ;;
+esac

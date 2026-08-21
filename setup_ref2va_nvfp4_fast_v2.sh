@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# SETUP #6 — MiniMax H3 Ref2VA NVFP4 + AfterMidnight
-# Targets the isolated environment created earlier:
-#   /workspace/runpod-slim/ComfyUI-Ref2VA
-# Does NOT modify the old /workspace/runpod-slim/ComfyUI tree.
+# SETUP #6 — MiniMax H3 Ref2VA NVFP4 + AfterMidnight (standalone/idempotent)
+# Creates its own environment at /workspace/runpod-slim/ComfyUI-Ref2VA.
+# SETUP #5 and an older SETUP #6 are not prerequisites. If compatible model
+# files already exist in /workspace/runpod-slim/ComfyUI they are reused by
+# symlink; otherwise this script downloads them. The old ComfyUI tree is never
+# modified or deleted.
 
 BASE="/workspace/runpod-slim"
 COMFY="$BASE/ComfyUI-Ref2VA"
@@ -23,10 +25,125 @@ AFTERMIDNIGHT_SOFT_SHA256="16934ba9640e787097fdc6284b065035adaeb6313476abe9a96c0
 AFTERMIDNIGHT_SEXY="AfterMidnight_ref2va_h3_sexytime_rank64-v1.2.safetensors"
 AFTERMIDNIGHT_SEXY_SHA256="82226a7c7f0b4631092f9270fa33d078c985a2d757895fcbe8f3fca8881bef59"
 LORA_DIR="$COMFY/models/loras"
+TEXT_ENCODER="qwen3vl-32B-MiniMax-H3-Q4_K_M.gguf"
+VIDEO_VAE="minimax_h3_video_vae_fp16.safetensors"
+AUDIO_VAE="minimax_h3_audio_vae_fp32.safetensors"
 
 green() { printf '\033[0;32m%s\033[0m\n' "$*"; }
 red() { printf '\033[0;31m%s\033[0m\n' "$*"; }
 die() { red "[FAILED] $*"; exit 1; }
+
+on_error() {
+  local rc=$?
+  red "SETUP #6 FAILED (exit=$rc, line=${BASH_LINENO[0]:-unknown})"
+  echo "Log: $LOG"
+  exit "$rc"
+}
+trap on_error ERR
+
+hf_curl() {
+  local url="$1" output="$2"
+  local auth=()
+  [[ -n "${HF_TOKEN:-}" ]] && auth=(-H "Authorization: Bearer $HF_TOKEN")
+  curl -fL -C - --retry 12 --retry-all-errors --retry-delay 20 \
+    --connect-timeout 30 "${auth[@]}" -o "$output" "$url"
+}
+
+ensure_support_model() {
+  local rel="$1" url="$2" min_bytes="$3"
+  local target="$COMFY/models/$rel"
+  local source="$BASE/ComfyUI/models/$rel"
+  mkdir -p "$(dirname "$target")"
+
+  if [[ -s "$target" ]] && [[ "$(stat -Lc%s "$target")" -ge "$min_bytes" ]]; then
+    echo "  [SKIP] $(basename "$target")"
+    return 0
+  fi
+  rm -f "$target"
+  if [[ -s "$source" ]] && [[ "$(stat -Lc%s "$source")" -ge "$min_bytes" ]]; then
+    ln -s "$source" "$target"
+    echo "  [LINK] $(basename "$target") from existing ComfyUI"
+    return 0
+  fi
+
+  echo "  [DL] $(basename "$target")"
+  hf_curl "$url" "$target.part"
+  [[ -s "$target.part" ]] && [[ "$(stat -c%s "$target.part")" -ge "$min_bytes" ]] || \
+    die "Downloaded file is incomplete: $target.part"
+  mv -f "$target.part" "$target"
+}
+
+bootstrap_isolated_comfyui() {
+  echo "[0/7] Prepare standalone Ref2VA ComfyUI"
+
+  local missing=()
+  for cmd in git curl; do command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd"); done
+  if ((${#missing[@]})); then
+    command -v apt-get >/dev/null 2>&1 || die "Missing tools: ${missing[*]}"
+    apt-get update -qq
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq git curl ca-certificates
+  fi
+  if ! command -v aria2c >/dev/null 2>&1 || ! command -v lsof >/dev/null 2>&1; then
+    apt-get update -qq
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq aria2 lsof
+  fi
+
+  if [[ ! -f "$COMFY/main.py" ]]; then
+    if [[ -e "$COMFY" ]]; then
+      local backup="${COMFY}.incomplete.$(date +%Y%m%d-%H%M%S)"
+      mv "$COMFY" "$backup"
+      echo "  [BACKUP] Incomplete directory moved to $backup"
+    fi
+    git clone --depth 1 https://github.com/comfyanonymous/ComfyUI.git "$COMFY"
+  else
+    echo "  [SKIP] Existing isolated ComfyUI"
+  fi
+
+  grep -Rqs "MiniMaxH3ReferenceToVideo" "$COMFY/comfy_extras" || \
+    die "This ComfyUI checkout lacks MiniMaxH3ReferenceToVideo"
+
+  local py=""
+  if command -v python3.12 >/dev/null 2>&1; then py="$(command -v python3.12)";
+  elif command -v python3 >/dev/null 2>&1; then py="$(command -v python3)";
+  else die "python3.12/python3 not found"; fi
+
+  if [[ ! -x "$COMFY/.venv/bin/python" ]]; then
+    "$py" -m venv --system-site-packages "$COMFY/.venv" || {
+      apt-get update -qq
+      DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3-venv
+      "$py" -m venv --system-site-packages "$COMFY/.venv"
+    }
+  fi
+
+  if [[ ! -f "$COMFY/.setup6_core_ok" ]]; then
+    "$COMFY/.venv/bin/python" -m pip install -q --upgrade pip setuptools wheel
+    "$COMFY/.venv/bin/python" -m pip install -q -r "$COMFY/requirements.txt"
+    touch "$COMFY/.setup6_core_ok"
+  fi
+
+  if [[ ! -f "$COMFY/custom_nodes/ComfyUI-GGUF/__init__.py" ]]; then
+    rm -rf "$COMFY/custom_nodes/ComfyUI-GGUF"
+    git clone --depth 1 https://github.com/city96/ComfyUI-GGUF.git \
+      "$COMFY/custom_nodes/ComfyUI-GGUF"
+  fi
+  if [[ -f "$COMFY/custom_nodes/ComfyUI-GGUF/requirements.txt" ]] && \
+     [[ ! -f "$COMFY/custom_nodes/ComfyUI-GGUF/.setup6_requirements_ok" ]]; then
+    "$COMFY/.venv/bin/python" -m pip install -q \
+      -r "$COMFY/custom_nodes/ComfyUI-GGUF/requirements.txt"
+    touch "$COMFY/custom_nodes/ComfyUI-GGUF/.setup6_requirements_ok"
+  fi
+
+  ensure_support_model "text_encoders/$TEXT_ENCODER" \
+    "https://huggingface.co/realrebelai/MiniMax-H3_GGUFs/resolve/main/$TEXT_ENCODER?download=true" \
+    10000000000
+  ensure_support_model "vae/$VIDEO_VAE" \
+    "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/vae/$VIDEO_VAE?download=true" \
+    900000000
+  ensure_support_model "vae/$AUDIO_VAE" \
+    "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/vae/$AUDIO_VAE?download=true" \
+    300000000
+  green "[0/7] Standalone environment ready"
+}
 
 download_hf_lora() {
   local name="$1" expected_sha="$2" dest="$LORA_DIR/$1"
@@ -46,8 +163,11 @@ download_hf_lora() {
   mv -f "$dest.part" "$dest"
 }
 
-[[ -f "$COMFY/main.py" ]] || die "Isolated Ref2VA ComfyUI not found: $COMFY"
-[[ -x "$COMFY/.venv/bin/python" ]] || die "Isolated venv not found"
+if [[ -n "${HF_TOKEN:-}" ]] && [[ "$HF_TOKEN" != hf_* ]]; then
+  die "HF_TOKEN does not look like a Hugging Face token"
+fi
+
+bootstrap_isolated_comfyui
 
 mkdir -p "$(dirname "$DEST")" "$WF_DIR" "$LORA_DIR"
 

@@ -15,7 +15,7 @@ set -Eeuo pipefail
 ###############################################################################
 
 SCRIPT_NAME="runpod_zimage_base_uncut_v5_fast"
-INSTALLER_VERSION="5.0.0-base-uncut-fast"
+INSTALLER_VERSION="5.0.1-base-uncut-fast"
 BASE_DIR="${BASE_DIR:-/workspace/runpod-slim}"
 COMFY_DIR="${COMFY_DIR:-${BASE_DIR}/ComfyUI-ZImage}"
 COMFY_REF="${COMFY_REF:-v0.33.4}"
@@ -226,6 +226,7 @@ PY
 }
 
 prepare_checkout() {
+  local tracked_status=""
   mkdir -p "${BASE_DIR}"
   if [[ ! -d "${COMFY_DIR}/.git" ]]; then
     [[ ! -e "${COMFY_DIR}" || -z "$(ls -A "${COMFY_DIR}" 2>/dev/null)" ]] || {
@@ -234,9 +235,28 @@ prepare_checkout() {
     git clone --filter=blob:none --no-checkout https://github.com/Comfy-Org/ComfyUI.git "${COMFY_DIR}"
   fi
   cd "${COMFY_DIR}"
+  tracked_status="$(git status --porcelain --untracked-files=no 2>/dev/null || true)"
+  if [[ -n "${tracked_status}" ]]; then
+    # A terminated/no-checkout installation can leave every tracked path marked
+    # only as deleted. There is no edited content to lose in that exact state,
+    # so restore the missing code files. Any modification/addition still stops.
+    if printf '%s\n' "${tracked_status}" | awk '
+      substr($0,1,2)!="D " && substr($0,1,2)!=" D" { bad=1 }
+      END { exit bad }
+    '; then
+      echo "[RECOVER] Incomplete checkout detected (tracked deletions only)."
+      echo "          Restoring missing ComfyUI code; models, inputs, outputs and workflows are untouched."
+      git restore --source=HEAD --staged --worktree -- .
+    else
+      echo "[FATAL] Genuine tracked local changes exist in ${COMFY_DIR}; refusing to overwrite them"
+      printf '%s\n' "${tracked_status}" | head -80
+      [[ "$(printf '%s\n' "${tracked_status}" | wc -l)" -le 80 ]] || echo "... additional status lines omitted"
+      return 1
+    fi
+  fi
   if ! git diff --quiet || ! git diff --cached --quiet; then
     echo "[FATAL] Tracked local changes exist in ${COMFY_DIR}; refusing to overwrite them"
-    git status --short
+    git status --short --untracked-files=no | head -80
     return 1
   fi
   git fetch --depth=1 origin "refs/tags/${COMFY_REF}:refs/tags/${COMFY_REF}"

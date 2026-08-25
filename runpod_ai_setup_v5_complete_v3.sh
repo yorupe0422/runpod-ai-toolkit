@@ -216,6 +216,11 @@ verified_download() {
     job="$(mktemp /tmp/setup5-aria2.XXXXXX)"
     chmod 600 "$job"
     printf '%s\n' "$url" > "$job"
+    # With --input-file, dir/out must be URI-local options. Supplying them only
+    # on aria2c's command line can let Hugging Face Content-Disposition replace
+    # the requested filename with an internal Xet/CAS hash.
+    printf '  dir=%s\n' "$(dirname "$dest")" >> "$job"
+    printf '  out=%s\n' "$(basename "$dest")" >> "$job"
     if [[ -n "${HF_TOKEN:-}" ]]; then
       printf '  header=Authorization: Bearer %s\n' "$HF_TOKEN" >> "$job"
     fi
@@ -237,9 +242,7 @@ verified_download() {
         --connect-timeout=20 \
         --lowest-speed-limit=64K \
         --summary-interval=10 \
-        --console-log-level=warn \
-        --dir="$(dirname "$dest")" \
-        --out="$(basename "$dest")"
+        --console-log-level=warn
     ); then
       rc=0
       break

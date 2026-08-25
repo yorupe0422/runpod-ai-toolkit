@@ -20,7 +20,7 @@ set -Eeuo pipefail
 ###############################################################################
 
 SCRIPT_NAME="runpod_zimage_base_uncut_v9_fresh"
-INSTALLER_VERSION="9.0.0-zimage-base-uncut-fresh"
+INSTALLER_VERSION="9.0.1-zimage-base-uncut-fresh"
 BASE_DIR="${BASE_DIR:-/workspace/runpod-slim}"
 COMFY_DIR="${COMFY_DIR:-${BASE_DIR}/ComfyUI-ZImage-V9}"
 COMFY_REF="${COMFY_REF:-v0.33.4}"
@@ -42,6 +42,7 @@ PYTHON_RECORD="${STATE_DIR}/python_source.txt"
 ERROR_FILE="${STATE_DIR}/last_error.txt"
 PHASE_LOG_DIR="${STATE_DIR}/phases"
 CORE_MARKER="${COMFY_DIR}/.zimage-v9-core-ok"
+CORE_SCHEMA="zimage-v9-core:${COMFY_REF}:${COMFY_COMMIT}"
 HEARTBEAT_SECONDS="${HEARTBEAT_SECONDS:-20}"
 NORMAL_TIMEOUT_SECONDS="${NORMAL_TIMEOUT_SECONDS:-2400}"
 CLONE_TIMEOUT_SECONDS="${CLONE_TIMEOUT_SECONDS:-900}"
@@ -418,12 +419,15 @@ free_port_8188() {
 }
 
 fresh_comfyui_core() {
-  local stage_root stage_comfy backup
+  local stage_root stage_comfy backup existing_marker=""
   mkdir -p "${BASE_DIR}"
+  [[ -f "${CORE_MARKER}" ]] && existing_marker="$(cat "${CORE_MARKER}" 2>/dev/null || true)"
   if [[ -f "${CORE_MARKER}" && -f "${COMFY_DIR}/main.py" && -d "${COMFY_DIR}/.git" ]] \
-    && [[ "$(cat "${CORE_MARKER}" 2>/dev/null || true)" == "${INSTALLER_VERSION}:${COMFY_REF}:${COMFY_COMMIT}" ]] \
+    && { [[ "${existing_marker}" == "${CORE_SCHEMA}" ]] \
+      || [[ "${existing_marker}" == "9.0.0-zimage-base-uncut-fresh:${COMFY_REF}:${COMFY_COMMIT}" ]]; } \
     && git -C "${COMFY_DIR}" diff --quiet \
     && git -C "${COMFY_DIR}" diff --cached --quiet; then
+    printf '%s\n' "${CORE_SCHEMA}" > "${CORE_MARKER}"
     echo "[FAST-SKIP] Clean V9 ComfyUI core already verified."
     return 0
   fi
@@ -463,7 +467,7 @@ fresh_comfyui_core() {
   fi
   mv "${stage_comfy}" "${COMFY_DIR}"
   rmdir "${stage_root}" 2>/dev/null || true
-  printf '%s:%s:%s\n' "${INSTALLER_VERSION}" "${COMFY_REF}" "${COMFY_COMMIT}" > "${CORE_MARKER}"
+  printf '%s\n' "${CORE_SCHEMA}" > "${CORE_MARKER}"
   echo "[OK] Fresh ComfyUI $(git -C "${COMFY_DIR}" describe --tags --always) at $(git -C "${COMFY_DIR}" rev-parse --short=12 HEAD)"
 }
 
@@ -566,7 +570,8 @@ PY
 }
 
 marker_is_valid() {
-  local file="$1" expected_sha="$2" marker="${file}.sha256-ok" mark_sha="" mark_size="" actual_size
+  local file="$1" expected_sha="$2" marker mark_sha="" mark_size="" actual_size
+  marker="${file}.sha256-ok"
   [[ -f "${file}" && -f "${marker}" ]] || return 1
   read -r mark_sha mark_size < "${marker}" || return 1
   actual_size="$(stat -c %s "${file}")"
@@ -620,7 +625,8 @@ aria_attempt() {
 }
 
 download_verified() {
-  local url="$1" relative="$2" expected_sha="$3" dst="${COMFY_DIR}/${relative}" actual connections
+  local url="$1" relative="$2" expected_sha="$3" dst actual connections
+  dst="${COMFY_DIR}/${relative}"
   mkdir -p "$(dirname "${dst}")"
   if marker_is_valid "${dst}" "${expected_sha}"; then
     validate_safetensors "${dst}"

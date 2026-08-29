@@ -121,7 +121,10 @@ pids="$(lsof -ti tcp:$PORT 2>/dev/null || true)"
 if [[ -n "$pids" ]]; then
   for pid in $pids; do
     cmd="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)"
-    [[ "$cmd" == *"main.py"* && "$cmd" == *"/workspace/runpod-slim/"* ]] || die "Port $PORT is occupied by unrelated PID $pid; it was not stopped."
+    cwd="$(readlink -f "/proc/$pid/cwd" 2>/dev/null || true)"
+    # ComfyUI is normally launched as `python main.py`, so cmdline alone has
+    # no absolute path.  The working directory is the reliable safe check.
+    [[ "$cmd" == *"main.py"* && "$cwd" == "$ROOT"/ComfyUI* ]] || die "Port $PORT is occupied by unrelated PID $pid (cwd: ${cwd:-unknown}); it was not stopped."
   done
   echo "  [PORT] Stopping existing RunPod ComfyUI: $pids"
   kill $pids 2>/dev/null || true
